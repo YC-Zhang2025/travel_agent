@@ -219,12 +219,51 @@ def calculate_budget(runtime: ToolRuntime) -> dict:
 
 @tool
 def search_travel_knowledge(
-    city: str,
-    query: str,
+    runtime: ToolRuntime,
 ) -> list[dict]:
-    """从本地向量知识库检索指定城市的景点资料和来源。"""
-    return retrieve_travel_knowledge(
-        query=query,
-        city=city,
-        limit=4,
-    )
+    """检索当前城市中已经被选中的景点资料，参数由 State 自动提供。"""
+    state = runtime.state
+    messages = state["messages"]
+
+    attractions = get_latest_tool_result(
+        messages,
+        "search_attractions",
+    ) or []
+
+    city = state.get("city") or ""
+
+    if not city or not attractions:
+        return []
+
+    results = []
+    added_names = set()
+
+    for attraction in attractions:
+        attraction_name = attraction.get("name")
+
+        if not attraction_name:
+            continue
+
+        candidates = retrieve_travel_knowledge(
+            query=attraction_name,
+            city=city,
+            limit=4,
+        )
+
+        exact_match = next(
+            (
+                item
+                for item in candidates
+                if item.get("name") == attraction_name
+            ),
+            None,
+        )
+
+        if (
+            exact_match is not None
+            and attraction_name not in added_names
+        ):
+            results.append(exact_match)
+            added_names.add(attraction_name)
+
+    return results

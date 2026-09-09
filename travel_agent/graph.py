@@ -3,7 +3,6 @@ import json
 
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from langchain_groq import ChatGroq
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
@@ -33,9 +32,9 @@ SYSTEM_PROMPT = """
 目前本地数据只支持成都和北京。
 
 规划旅行时：
-1. 先调用 search_attractions 查询景点。
-2. 再调用 search_hotels_mcp 查询酒店。
-3. 需要估算住宿和门票时，调用 calculate_budget。
+1. 必须依次调用 search_attractions、search_hotels_mcp、search_travel_knowledge、calculate_budget。
+2. 每次只调用一个工具，取得前一个工具的返回结果后再调用下一个，不得在同一次响应中并行调用多个工具。
+3. calculate_budget 必须在景点和酒店工具都已经返回结果后调用。
 4. 工具没有返回数据时，明确说明原因，不要编造真实信息。
 5. 最终回答使用中文，包含推荐景点、酒店、基础预算和建议。
 6. 最终方案只能推荐工具实际返回的景点和酒店。
@@ -63,12 +62,11 @@ SYSTEM_PROMPT = """
 28. search_travel_knowledge 只用于补充已选景点的信息和来源，不能把检索到的其他景点自动加入行程。
 29. 不得用“例如”“可以去”等方式补充工具没有返回的景点。
 30. 调用 calculate_budget 时，attraction_ticket_per_person 必须等于所有最终选中景点票价之和，不能只传其中一个景点的票价。
-31. search_attractions 的城市和偏好由 TravelState 自动注入，
-    调用时不要构造参数。
-32. search_hotels_mcp 的城市和每晚预算由 TravelState 自动计算，
-    调用时不要构造参数。
-33. 酒店预算策略为：总预算的 50% 分配给住宿，
-    再除以住宿晚数得到每晚价格上限。
+31. search_attractions 的城市和偏好由 TravelState 自动注入，调用时不要构造参数。
+32. search_hotels_mcp 的城市和每晚预算由 TravelState 自动计算，调用时不要构造参数。
+33. 酒店预算策略为：总预算的 50% 分配给住宿，再除以住宿晚数得到每晚价格上限。
+34. search_travel_knowledge 的城市和候选景点由 TravelState 以及 search_attractions 的返回结果自动提供，调用时不要构造参数。
+35. calculate_budget 的人数、天数、酒店和景点费用由 TravelState 以及已有工具结果自动提供，调用时不要构造参数。
 """
 
 if not os.getenv("GROQ_API_KEY"):
