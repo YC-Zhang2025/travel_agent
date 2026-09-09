@@ -1,0 +1,65 @@
+[
+  {
+    "id": "chengdu-kuanzhai",
+    "city": "成都",
+    "name": "宽窄巷子",
+    "category": "文化",
+    "ticket": 0,
+    "content": "宽窄巷子是成都本地知识库中的文化类景点，门票价格为0元，适合偏好城市文化体验的游客。",
+    "source": "local://attractions/chengdu/kuanzhai"
+  },
+  {
+    "id": "chengdu-panda",
+    "city": "成都",
+    "name": "大熊猫繁育研究基地",
+    "category": "自然",
+    "ticket": 55,
+    "content": "大熊猫繁育研究基地是成都本地知识库中的自然类景点，门票价格为55元，适合喜欢动物和自然主题的游客。",
+    "source": "local://attractions/chengdu/panda-base"
+  },
+  {
+    "id": "chengdu-jinli",
+    "city": "成都",
+    "name": "锦里",
+    "category": "美食",
+    "ticket": 0,
+    "content": "锦里是成都本地知识库中的美食类景点，门票价格为0元，适合希望体验成都美食氛围的游客。",
+    "source": "local://attractions/chengdu/jinli"
+  },
+  {
+    "id": "chengdu-wuhou",
+    "city": "成都",
+    "name": "武侯祠",
+    "category": "历史",
+    "ticket": 50,
+    "content": "武侯祠是成都本地知识库中的历史类景点，门票价格为50元，适合对历史文化感兴趣的游客。",
+    "source": "local://attractions/chengdu/wuhou"
+  },
+  {
+    "id": "beijing-palace",
+    "city": "北京",
+    "name": "故宫",
+    "category": "历史",
+    "ticket": 60,
+    "content": "故宫是北京本地知识库中的历史类景点，门票价格为60元，适合偏好历史文化主题的游客。",
+    "source": "local://attractions/beijing/palace"
+  },
+  {
+    "id": "beijing-summer-palace",
+    "city": "北京",
+    "name": "颐和园",
+    "category": "自然",
+    "ticket": 30,
+    "content": "颐和园是北京本地知识库中的自然类景点，门票价格为30元，适合偏好园林和自然主题的游客。",
+    "source": "local://attractions/beijing/summer-palace"
+  },
+  {
+    "id": "beijing-nanluogu",
+    "city": "北京",
+    "name": "南锣鼓巷",
+    "category": "美食",
+    "ticket": 0,
+    "content": "南锣鼓巷是北京本地知识库中的美食类景点，门票价格为0元，适合希望体验城市街巷与美食氛围的游客。",
+    "source": "local://attractions/beijing/nanluogu"
+  }
+]

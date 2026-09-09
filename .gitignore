@@ -1,0 +1,32 @@
+# API 密钥与环境变量
+.env
+.env.*
+!.env.example
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 虚拟环境
+.venv/
+venv/
+
+# 本地数据库与 Memory
+*.db
+*.sqlite
+*.sqlite3
+
+# 可重新生成的向量索引
+data/chroma/
+
+# 日志与临时文件
+*.log
+tmp/
+temp/
+
+# 编辑器本地设置
+.vscode/
+.idea/
