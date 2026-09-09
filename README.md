@@ -16,6 +16,7 @@
 - 使用确定性工具计算住宿和门票预算
 - 使用 pytest 实现单元测试、MCP 集成测试和端到端测试
 - 使用 LangSmith 查看完整 Agent Trace
+- 使用 LangSmith pytest Evaluation 构建离线评测数据集并记录多维评分
 
 ## 项目结构
 
@@ -116,6 +117,17 @@ python -m pytest -m e2e -v -s
 
 端到端测试会调用 Groq API，并启动本地 MCP 子进程。
 
+运行 LangSmith 离线数据集评测：
+
+```bash
+set -a
+source .env
+set +a
+
+LANGSMITH_TEST_SUITE="travel-agent-evaluation" \
+LANGSMITH_EXPERIMENT="baseline-grounded-v1" \
+python -m pytest tests/test_langsmith_eval.py -m evaluation -v
+
 ## 安全说明
 
 - API Key 只保存在 `.env`
@@ -126,7 +138,16 @@ python -m pytest -m e2e -v -s
 ## Roadmap
 
 - 最终答案事实校验
-- LangSmith Dataset Evaluation
 - FastAPI 服务
 - Docker 部署
 - PostgreSQL / pgvector
+
+```markdown
+## 已知问题
+
+当前 LangGraph 版本在序列化非空 Runtime context 时可能输出
+`PydanticSerializationUnexpectedValue` 警告。该警告不影响
+context 读取、Memory、Agent 执行和测试结果。
+
+相关上游问题：
+https://github.com/langchain-ai/langgraph/issues/8417
