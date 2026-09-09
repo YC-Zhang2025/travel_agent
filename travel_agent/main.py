@@ -11,7 +11,6 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.store.sqlite import SqliteStore
 
 from travel_agent.graph import build_travel_graph
-from travel_agent.state import TravelContext
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="智能旅行规划 Agent")
@@ -68,7 +67,7 @@ def main() -> None:
         result = graph.invoke(
             {"messages": [HumanMessage(content=args.query)]},
             config=config,
-            context=TravelContext(user_id=args.user_id),
+            context={"user_id": args.user_id},
         )
     finally:
         checkpoint_connection.close()
@@ -93,6 +92,23 @@ def main() -> None:
             print(
                 f"[工具返回] {message.name}: "
                 f"{message.content}"
+            )
+
+    if result.get("answer_is_grounded") is not None:
+        print("\n--- 最终答案校验 ---")
+        print(
+            "校验通过：",
+            result["answer_is_grounded"],
+        )
+        print(
+            "修订次数：",
+            result.get("revision_count", 0),
+        )
+
+        if result.get("validation_feedback"):
+            print(
+                "校验反馈：",
+                result["validation_feedback"],
             )
 
     print("\n--- 最终方案 ---")

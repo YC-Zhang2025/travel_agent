@@ -2,15 +2,25 @@ import os
 import json
 
 from dotenv import load_dotenv
-from langchain_core.messages import AIMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    SystemMessage,
+)
 from langchain_groq import ChatGroq
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 from langgraph.runtime import Runtime
-from travel_agent.state import TravelContext, TravelRequest, TravelState
+from travel_agent.state import (
+    AnswerReview,
+    TravelContext,
+    TravelRequest,
+    TravelState,
+)
 
 from travel_agent.tools import (
     calculate_budget,
+    get_latest_tool_result,
     search_attractions,
     search_hotels_mcp,
     search_travel_knowledge,
@@ -20,8 +30,8 @@ load_dotenv()
 
 TOOLS = [
     search_attractions,
-    search_travel_knowledge,
     search_hotels_mcp,
+    search_travel_knowledge,
     calculate_budget,
 ]
 
@@ -81,6 +91,10 @@ model = ChatGroq(
 request_extractor = model.with_structured_output(TravelRequest)
 model_with_tools = model.bind_tools(TOOLS)
 
+answer_reviewer = model.with_structured_output(AnswerReview)
+
+MAX_ANSWER_REVISIONS = 1
+
 def extract_request(
     state: TravelState,
     runtime: Runtime[TravelContext],
@@ -110,7 +124,7 @@ def extract_request(
             new_data[field] = state.get(field)
 
     # 读取当前用户跨线程保存的长期偏好。
-    namespace = ("travel_users", runtime.context.user_id)
+    namespace = ("travel_users", runtime.context["user_id"],)
     memory_item = runtime.store.get(namespace, "profile")
 
     saved_profile = memory_item.value if memory_item else {}
@@ -135,6 +149,9 @@ def extract_request(
 
     days = new_data.get("days")
     new_data["nights"] = max(days - 1, 0) if days else None
+    new_data["answer_is_grounded"] = None
+    new_data["validation_feedback"] = None
+    new_data["revision_count"] = 0
 
     # 使用固定 key 更新用户画像，避免重复创建大量记录。
     runtime.store.put(
@@ -199,73 +216,248 @@ def call_model(state: TravelState) -> dict:
     )
     return {"messages": [response]}
 
+def build_answer_evidence(state: TravelState) -> dict:
+    """从 State 和 ToolMessage 中整理最终答案唯一可以使用的证据。"""
+    messages = state["messages"]
+
+    attractions = get_latest_tool_result(
+        messages,
+        "search_attractions",
+    ) or []
+
+    hotel_result = get_latest_tool_result(
+        messages,
+        "search_hotels_mcp",
+    ) or {}
+
+    knowledge = get_latest_tool_result(
+        messages,
+        "search_travel_knowledge",
+    ) or []
+
+    budget_result = get_latest_tool_result(
+        messages,
+        "calculate_budget",
+    ) or {}
+
+    remaining_budget = None
+
+    if (
+        state.get("budget") is not None
+        and budget_result.get("total_cost") is not None
+    ):
+        remaining_budget = (
+            float(state["budget"])
+            - float(budget_result["total_cost"])
+        )
+
+    return {
+        "request": {
+            "city": state.get("city"),
+            "days": state.get("days"),
+            "nights": state.get("nights"),
+            "people": state.get("people"),
+            "total_budget": state.get("budget"),
+            "preferences": state.get("preferences") or [],
+            "pace": state.get("pace"),
+        },
+        "selected_attractions": attractions,
+        "hotel_search": hotel_result,
+        "knowledge": knowledge,
+        "budget_calculation": budget_result,
+        "remaining_budget": remaining_budget,
+    }
+
 def route_after_agent(state: TravelState) -> str:
-    """根据 Agent 最后一次响应决定继续调用工具、结束或补救空响应。"""
+    """工具调用继续执行；普通文本响应统一交给最终写作节点。"""
     last_message = state["messages"][-1]
 
     if getattr(last_message, "tool_calls", None):
         return "tools"
 
-    content = last_message.content
-    if isinstance(content, str):
-        has_content = bool(content.strip())
-    else:
-        has_content = bool(content)
-
-    if has_content:
-        return "end"
-
-    # 模型没有继续调用工具，但最终正文为空
     return "finalize"
 
 
 def finalize_answer(state: TravelState) -> dict:
-    """使用不绑定工具的模型，根据已有工具结果生成最终旅行方案。"""
+    """只依据结构化证据生成最终旅行方案。"""
+    evidence = build_answer_evidence(state)
+
     finalizer_prompt = SystemMessage(
         content="""
 你是旅行规划 Agent 的最终答案生成器。
 
-此前的 Agent 已经完成工具调用。请根据对话中的 ToolMessage 结果，
-直接生成完整的中文旅行方案。
+你只能使用用户消息中提供的需求，以及“可靠证据”JSON 中的事实。
+不得使用常识补充任何地点、活动、位置关系、价格、开放时间、
+交通方式、预订状态、预订渠道、设施或具体食物。
 
 要求：
-1. 不再调用任何工具。
-2. 只能使用工具已经返回的景点、酒店、价格和知识库信息。
-3. 包含行程安排、酒店推荐、基础预算和预算剩余说明。
-4. 住宿晚数按照工具返回的 nights 字段。
-5. 预算以 calculate_budget 最后一次返回的结果为准。
-6. 如果知识库结果包含 source，请列出相关来源。
-7. 不要声称餐饮、交通和购物已经包含在基础预算中。
-8. 不要输出思考过程，直接输出最终方案。
-9. 酒店价格默认为每间每晚；当前默认两人同住一间房。
-   住宿费用 = hotel_price_per_night × nights，不乘 people。
-10. 预算数字和计算公式必须与 calculate_budget 返回的字段完全一致，
-    不得自行重新计算或改变计算口径。
-11. 最终行程中的景点名称必须逐一出现在 search_attractions 的返回结果中。
-    RAG 返回但 search_attractions 没有选中的景点，不得加入行程。
-12. 不得推荐或举例说明任何工具没有返回的景点。
-13. 如果最终行程包含多个收费景点，
-    calculate_budget 的 attraction_ticket_per_person
-    必须是这些景点每人门票的总和。
-14. 如果预算工具没有计入某个景点的门票，
-    最终行程也不得加入该景点。
+
+1. 只能推荐 selected_attractions 中的景点。
+2. 景点介绍只能引用 knowledge 中对应景点的 content。
+3. 酒店只能选择 budget_calculation.selected_hotel。
+4. 酒店名称和价格必须来自 hotel_search。
+5. 酒店来源必须使用 hotel_search.source。
+6. 预算数字必须使用 budget_calculation 中的字段。
+7. remaining_budget 只是扣除住宿与门票后的余额。
+8. 不得声称剩余预算足以覆盖餐饮、交通、购物或整趟旅行。
+9. 不得声称酒店已经预订。
+10. 允许使用的普通行程动作只有：
+    抵达、入住、休息、游览已选景点、自由时间、返程。
+11. 不得出现证据中没有的具名地点或其他具体活动。
+12. 数据不足时直接说明“当前数据不足”，不得自行补充。
+13. 最终回答使用中文，包含行程、酒店、基础预算和信息来源。
+14. 不要声称“没有进行任何推测”，只需直接给出方案。
 """
     )
 
-    # route_after_agent 只会在最后一条消息内容为空时进入这里，
-    # 因此去掉这条空消息，但保留此前所有工具调用及返回结果。
-    history = state["messages"][:-1]
+    evidence_message = HumanMessage(
+        content=(
+            "下面是生成答案时唯一允许使用的可靠证据：\n"
+            + json.dumps(
+                evidence,
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    )
 
-    # 这里使用原始 model，而不是 model_with_tools。
-    # Finalizer 因此只能写答案，不能再次调用工具。
     response = model.invoke(
         [
             finalizer_prompt,
-            *history,
+            evidence_message,
         ]
     )
 
     return {"messages": [response]}
+
+def validate_answer(state: TravelState) -> dict:
+    """检查最终答案中的事实是否都能由可靠证据支持。"""
+    evidence = build_answer_evidence(state)
+    final_answer = state["messages"][-1].content
+
+    validation_prompt = SystemMessage(
+        content="""
+你是严格的旅行方案事实校验器。
+
+请对比“可靠证据”和“待校验答案”，判断答案中的所有事实性内容
+是否都能由可靠证据直接支持。
+
+以下情况必须判定为不合格：
+
+1. 出现证据中没有的景点、酒店、地点或具体活动。
+2. 添加证据中没有的位置关系、交通、设施、开放时间或价格。
+3. 把酒店数据来源描述成预订来源，或者声称酒店已经预订。
+4. 声称剩余预算足以覆盖整趟旅行、餐饮、交通或购物。
+5. 声称“满足所有需求”“没有推测”“保证准确”等无法验证的结论。
+6. 景点介绍超出 knowledge.content 的信息。
+7. 预算数字与 budget_calculation 不一致。
+
+以下内容可以接受：
+
+1. Markdown 表格、标题和排版。
+2. 直接来自证据的数字和信息。
+3. 根据 total_budget 和 total_cost 得到的 remaining_budget。
+4. 抵达、入住、休息、游览已选景点、自由时间和返程等中性安排。
+
+如果不合格，feedback 必须明确指出应删除或修改的内容。
+如果合格，feedback 返回空字符串。
+"""
+    )
+
+    review_message = HumanMessage(
+        content=(
+            "可靠证据：\n"
+            + json.dumps(
+                evidence,
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n\n待校验答案：\n"
+            + str(final_answer)
+        )
+    )
+
+    review = answer_reviewer.invoke(
+        [
+            validation_prompt,
+            review_message,
+        ]
+    )
+
+    return {
+        "answer_is_grounded": review.is_grounded,
+        "validation_feedback": review.feedback or "",
+    }
+
+def revise_answer(state: TravelState) -> dict:
+    """根据校验反馈重新生成一次最终答案。"""
+    evidence = build_answer_evidence(state)
+    previous_answer = state["messages"][-1].content
+    feedback = state.get("validation_feedback") or ""
+
+    revision_prompt = SystemMessage(
+        content="""
+你是旅行方案修订器。
+
+请根据校验反馈修订答案。修订后的所有事实必须来自可靠证据。
+
+要求：
+
+1. 删除所有证据无法支持的内容。
+2. 不得添加新的地点、活动或事实。
+3. “source”只能描述为信息来源或数据来源，不能描述为预订来源。
+4. 不得声称酒店已经预订。
+5. 不得声称剩余预算足以覆盖整趟旅行。
+6. 不得声称满足所有需求或没有进行推测。
+7. 保留正确的行程、酒店、预算和来源信息。
+8. 只输出修订后的完整旅行方案，不要解释修改过程。
+"""
+    )
+
+    revision_message = HumanMessage(
+        content=(
+            "可靠证据：\n"
+            + json.dumps(
+                evidence,
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n\n校验反馈：\n"
+            + feedback
+            + "\n\n原答案：\n"
+            + str(previous_answer)
+        )
+    )
+
+    response = model.invoke(
+        [
+            revision_prompt,
+            revision_message,
+        ]
+    )
+
+    return {
+        "messages": [response],
+        "revision_count": (
+            int(state.get("revision_count") or 0) + 1
+        ),
+    }
+
+def route_after_answer_validation(
+    state: TravelState,
+) -> str:
+    """校验通过则结束，否则最多修订一次。"""
+    if state.get("answer_is_grounded"):
+        return "end"
+
+    revision_count = int(
+        state.get("revision_count") or 0
+    )
+
+    if revision_count >= MAX_ANSWER_REVISIONS:
+        return "end"
+
+    return "revise"
 
 def build_travel_graph(checkpointer=None, store=None):
     builder = StateGraph(
@@ -279,9 +471,10 @@ def build_travel_graph(checkpointer=None, store=None):
     builder.add_node("agent", call_model)
     builder.add_node("tools", ToolNode(TOOLS))
     builder.add_node("finalize", finalize_answer)
+    builder.add_node("validate_answer", validate_answer)
+    builder.add_node("revise_answer", revise_answer)
 
     builder.add_edge(START, "extract_request")
-
     builder.add_edge("extract_request", "validate_request")
 
     builder.add_conditional_edges(
@@ -301,12 +494,25 @@ def build_travel_graph(checkpointer=None, store=None):
         {
             "tools": "tools",
             "finalize": "finalize",
-            "end": END,
         },
     )
 
     builder.add_edge("tools", "agent")
-    builder.add_edge("finalize", END)
+    builder.add_edge("finalize", "validate_answer")
+
+    builder.add_conditional_edges(
+        "validate_answer",
+        route_after_answer_validation,
+        {
+            "end": END,
+            "revise": "revise_answer",
+        },
+    )
+
+    builder.add_edge(
+        "revise_answer",
+        "validate_answer",
+    )
 
     return builder.compile(
         checkpointer=checkpointer,

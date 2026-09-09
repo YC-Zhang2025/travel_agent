@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from langgraph.graph import MessagesState
-from dataclasses import dataclass
+from typing_extensions import TypedDict
 
 class TravelRequest(BaseModel):
     """从用户自然语言中提取的旅行需求。"""
@@ -33,6 +33,16 @@ class TravelRequest(BaseModel):
         description="行程节奏，例如轻松、适中、紧凑",
     )
 
+class AnswerReview(BaseModel):
+    """最终旅行方案的事实依据检查结果。"""
+
+    is_grounded: bool = Field(
+        description="最终答案中的事实是否全部能由工具结果支持",
+    )
+    feedback: str = Field(
+        default="",
+        description="不合格时需要修正的问题；合格时为空字符串",
+    )
 
 class TravelState(MessagesState):
     """旅行 Agent 在各节点之间共享的状态。"""
@@ -45,9 +55,11 @@ class TravelState(MessagesState):
     preferences: list[str]
     pace: str | None
     missing_fields: list[str]
+    answer_is_grounded: bool | None
+    validation_feedback: str | None
+    revision_count: int
 
-@dataclass
-class TravelContext:
+class TravelContext(TypedDict):
     """一次调用中不会改变的用户身份信息。"""
 
     user_id: str

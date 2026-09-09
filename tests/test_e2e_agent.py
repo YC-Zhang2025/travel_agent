@@ -70,6 +70,29 @@ def test_complete_travel_agent_flow():
 
     final_answer = output.rsplit(final_marker, maxsplit=1)[1].strip()
 
+        # 最终答案必须经过事实校验并通过
+    assert "--- 最终答案校验 ---" in output
+    assert "校验通过： True" in output
+
+    assert re.search(
+        r"修订次数： [01]",
+        output,
+    )
+
+    # 最终答案不能包含已知的无依据表达
+    unsupported_phrases = (
+        "预订来源",
+        "已经预订",
+        "已预订",
+        "未进行任何推测",
+        "没有进行任何推测",
+        "足以覆盖",
+        "足以满足",
+    )
+
+    for phrase in unsupported_phrases:
+        assert phrase not in final_answer
+
     assert final_answer
     assert final_answer != QUERY
     assert len(final_answer) >= 100
