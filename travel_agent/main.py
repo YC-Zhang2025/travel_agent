@@ -1,4 +1,5 @@
 import argparse
+import os
 import sqlite3
 from pathlib import Path
 
@@ -31,10 +32,21 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    database_path = Path("data/checkpoints.sqlite")
-    memory_path = Path("data/memory.sqlite")
+    database_path = Path(
+        os.getenv(
+            "TRAVEL_CHECKPOINT_DB",
+            "data/checkpoints.sqlite",
+        )
+    )
+    memory_path = Path(
+        os.getenv(
+            "TRAVEL_MEMORY_DB",
+            "data/memory.sqlite",
+        )
+    )
 
     database_path.parent.mkdir(parents=True, exist_ok=True)
+    memory_path.parent.mkdir(parents=True, exist_ok=True)
 
     checkpoint_connection = sqlite3.connect(
         database_path,
