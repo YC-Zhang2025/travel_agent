@@ -82,6 +82,8 @@ def test_complete_travel_agent_flow():
     # 最终答案不能包含已知的无依据表达
     unsupported_phrases = (
         "预订来源",
+        "预订渠道",
+        "预订平台",
         "已经预订",
         "已预订",
         "未进行任何推测",

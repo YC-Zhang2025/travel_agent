@@ -11,6 +11,9 @@ from langchain_groq import ChatGroq
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 from langgraph.runtime import Runtime
+from travel_agent.grounding import (
+    find_unsupported_answer_phrases,
+)
 from travel_agent.state import (
     AnswerReview,
     TravelContext,
@@ -296,7 +299,8 @@ def finalize_answer(state: TravelState) -> dict:
 2. 景点介绍只能引用 knowledge 中对应景点的 content。
 3. 酒店只能选择 budget_calculation.selected_hotel。
 4. 酒店名称和价格必须来自 hotel_search。
-5. 酒店来源必须使用 hotel_search.source。
+5. 酒店来源必须使用 hotel_search.source，并且只能称为信息来源或数据来源，
+   不能称为预订来源、预订渠道或预订平台。
 6. 预算数字必须使用 budget_calculation 中的字段。
 7. remaining_budget 只是扣除住宿与门票后的余额。
 8. 不得声称剩余预算足以覆盖餐饮、交通、购物或整趟旅行。
@@ -346,7 +350,8 @@ def validate_answer(state: TravelState) -> dict:
 
 1. 出现证据中没有的景点、酒店、地点或具体活动。
 2. 添加证据中没有的位置关系、交通、设施、开放时间或价格。
-3. 把酒店数据来源描述成预订来源，或者声称酒店已经预订。
+3. 把酒店数据来源描述成预订来源、预订渠道或预订平台，
+   或者声称酒店已经预订。
 4. 声称剩余预算足以覆盖整趟旅行、餐饮、交通或购物。
 5. 声称“满足所有需求”“没有推测”“保证准确”等无法验证的结论。
 6. 景点介绍超出 knowledge.content 的信息。
@@ -384,9 +389,27 @@ def validate_answer(state: TravelState) -> dict:
         ]
     )
 
+    deterministic_violations = (
+        find_unsupported_answer_phrases(str(final_answer))
+    )
+    feedback_parts = []
+
+    if review.feedback:
+        feedback_parts.append(review.feedback)
+
+    if deterministic_violations:
+        feedback_parts.append(
+            "删除或改写以下无依据表达："
+            + "、".join(deterministic_violations)
+            + "。MCP source 只能称为信息来源或数据来源。"
+        )
+
     return {
-        "answer_is_grounded": review.is_grounded,
-        "validation_feedback": review.feedback or "",
+        "answer_is_grounded": (
+            review.is_grounded
+            and not deterministic_violations
+        ),
+        "validation_feedback": "\n".join(feedback_parts),
     }
 
 def revise_answer(state: TravelState) -> dict:
@@ -405,7 +428,8 @@ def revise_answer(state: TravelState) -> dict:
 
 1. 删除所有证据无法支持的内容。
 2. 不得添加新的地点、活动或事实。
-3. “source”只能描述为信息来源或数据来源，不能描述为预订来源。
+3. “source”只能描述为信息来源或数据来源，
+   不能描述为预订来源、预订渠道或预订平台。
 4. 不得声称酒店已经预订。
 5. 不得声称剩余预算足以覆盖整趟旅行。
 6. 不得声称满足所有需求或没有进行推测。
