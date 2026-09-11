@@ -1,17 +1,11 @@
 import argparse
-import os
-import sqlite3
-from pathlib import Path
 
 from langchain_core.messages import (
     AIMessage,
-    HumanMessage,
     ToolMessage,
 )
-from langgraph.checkpoint.sqlite import SqliteSaver
-from langgraph.store.sqlite import SqliteStore
 
-from travel_agent.graph import build_travel_graph
+from travel_agent.service import create_service_from_env
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="智能旅行规划 Agent")
@@ -32,58 +26,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    database_path = Path(
-        os.getenv(
-            "TRAVEL_CHECKPOINT_DB",
-            "data/checkpoints.sqlite",
+    with create_service_from_env() as service:
+        result = service.invoke(
+            query=args.query,
+            user_id=args.user_id,
+            thread_id=args.thread_id,
         )
-    )
-    memory_path = Path(
-        os.getenv(
-            "TRAVEL_MEMORY_DB",
-            "data/memory.sqlite",
-        )
-    )
-
-    database_path.parent.mkdir(parents=True, exist_ok=True)
-    memory_path.parent.mkdir(parents=True, exist_ok=True)
-
-    checkpoint_connection = sqlite3.connect(
-        database_path,
-        check_same_thread=False,
-    )
-
-    memory_connection = sqlite3.connect(
-        memory_path,
-        check_same_thread=False,
-        isolation_level=None,
-    )
-
-    try:
-        checkpointer = SqliteSaver(checkpoint_connection)
-
-        store = SqliteStore(memory_connection)
-        store.setup()
-
-        graph = build_travel_graph(
-            checkpointer=checkpointer,
-            store=store,
-        )
-
-        config = {
-            "configurable": {
-                "thread_id": args.thread_id,
-            }
-        }
-
-        result = graph.invoke(
-            {"messages": [HumanMessage(content=args.query)]},
-            config=config,
-            context={"user_id": args.user_id},
-        )
-    finally:
-        checkpoint_connection.close()
-        memory_connection.close()
 
     print("\n--- 结构化旅行需求 ---")
     print(f"城市：{result.get('city')}")
