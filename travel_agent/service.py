@@ -8,9 +8,6 @@ from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.store.sqlite import SqliteStore
 
-from travel_agent.graph import build_travel_graph
-
-
 DEFAULT_CHECKPOINT_PATH = Path("data/checkpoints.sqlite")
 DEFAULT_MEMORY_PATH = Path("data/memory.sqlite")
 
@@ -34,6 +31,9 @@ class TravelAgentService:
         """打开数据库并构建一次可复用的 LangGraph。"""
         if self._graph is not None:
             return self
+
+        # 延迟导入 Graph，使健康检查和 API 契约测试不依赖模型密钥。
+        from travel_agent.graph import build_travel_graph
 
         self.checkpoint_path.parent.mkdir(
             parents=True,
